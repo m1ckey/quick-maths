@@ -4,8 +4,8 @@ import qm.game.card.Card;
 import qm.game.card.Cards;
 import qm.game.exception.IllegalBetException;
 import qm.game.exception.IllegalMoveException;
-import qm.game.player.Move;
 import qm.game.player.Player;
+import qm.game.player.Result;
 
 import java.util.*;
 
@@ -29,42 +29,6 @@ public class Game
 
   private Map<Player, Integer> bets = new HashMap<>();
 
-  public synchronized int join(Player player)
-  {
-    for (Player p : players) {
-      if (p == player) {
-        throw new IllegalArgumentException("player already joined");
-      }
-    }
-
-    for (int i = 0; i < players.length; i++) {
-      if (players[i] == null) {
-        players[i] = player;
-        return i;
-      }
-    }
-
-    throw new RuntimeException("max Players exceeded");
-  }
-
-  public synchronized void join(Player player,
-                                int position)
-  {
-    if (players[position] != null) {
-      throw new IllegalArgumentException("position already taken");
-    }
-    players[position] = player;
-  }
-
-  public synchronized void leave(Player player)
-  {
-    for (int i = 0; i < players.length; i++) {
-      if (players[i] == player) {
-        players[i] = null;
-      }
-    }
-  }
-
   private Map<Player, List<Card>> openCards = new HashMap<>();
 
   public Game(GameConfig config)
@@ -81,9 +45,55 @@ public class Game
     shuffleCards();
   }
 
+  public GameConfig getConfig()
+  {
+    return new GameConfig(config);
+  }
+
+  public synchronized int join(Player player)
+  {
+    for (int i = 0; i < players.length; i++) {
+      if (players[i] == null) {
+        join(player, i);
+        return i;
+      }
+    }
+
+    throw new RuntimeException("max Players exceeded");
+  }
+
+  public synchronized void leave(Player player)
+  {
+    for (int i = 0; i < players.length; i++) {
+      if (players[i] == player) {
+        players[i] = null;
+      }
+    }
+  }
+
+  public synchronized void join(Player player,
+                                int position)
+  {
+    if (player == null) throw new IllegalArgumentException("player cannot be null");
+    if (player.game != this) throw new IllegalArgumentException("player was not constructed for this game");
+
+    for (Player p : players) {
+      if (p == player) {
+        throw new IllegalArgumentException("player already joined");
+      }
+    }
+
+    if (players[position] != null) {
+      throw new IllegalArgumentException("position already taken");
+    }
+    players[position] = player;
+  }
+
   @Override
   public synchronized void run()
   {
+    List<Player> players = new ArrayList<>(Arrays.asList(this.players));
+
     // init openCards
     {
       openCards.clear();
@@ -98,8 +108,8 @@ public class Game
       bets.clear();
       for (Player p : players) {
         int bet = p.placeBet();
-        if (bet > config.getBetLimit()) throw new IllegalBetException("bet limit exceeded");
-        if (bet <= 0) throw new IllegalBetException("bet cant be <= 0");
+        if (bet < config.getBetLimitMin()) throw new IllegalBetException("bet limit undershot");
+        if (bet > config.getBetLimitMax()) throw new IllegalBetException("bet limit exceeded");
         bets.put(p, bet);
       }
     }
@@ -117,24 +127,36 @@ public class Game
 
     // play
     {
+      List<Player> disqualifiedPlayers = new ArrayList<>();
       for (Player p : players) {
-        servePlayer(p);
+        boolean disqualified = servePlayer(p);
+        if (disqualified) {
+          disqualifiedPlayers.add(p);
+        }
       }
+      players.removeAll(disqualifiedPlayers);
+      serveDealer();
     }
 
     // showdown
     {
-      int dealerCountIdeal = serveDealer();
+      List<Card> dealersCards = openCards.get(null);
+      int dealerCountIdeal = Cards.countIdeal(dealersCards);
+
       for (Player p : players) {
-        int countIdeal = Cards.countIdeal(openCards.get(p));
-        if (countIdeal > BLACKJACK) {
-          p.handleResult(BUST, 0);
-        } else if (countIdeal == dealerCountIdeal) {
+        List<Card> playersCards = openCards.get(p);
+        int playerCountIdeal = Cards.countIdeal(playersCards);
+
+        if (Cards.isBlackjack(playersCards) && !Cards.isBlackjack(dealersCards)) {
+          p.handleResult(Result.BLACKJACK, bets.get(p) * (1 + config.getBlackjackBonus()));
+        } else if (dealerCountIdeal > BLACKJACK) {
+          p.handleResult(VICTORY, bets.get(p) * 2);
+        } else if (playerCountIdeal == dealerCountIdeal) {
           p.handleResult(TIE, bets.get(p));
-        } else if (countIdeal < dealerCountIdeal) {
-          p.handleResult(LOSS, 0);
+        } else if (playerCountIdeal < dealerCountIdeal) {
+          p.handleResult(DEFEAT, 0);
         } else {
-          p.handleResult(WIN, bets.get(p) * 2);
+          p.handleResult(VICTORY, bets.get(p) * 2);
         }
       }
     }
@@ -145,7 +167,7 @@ public class Game
     drawIndex = 0;
     Collections.shuffle(cards);
     for (Player p : players) {
-      p.notifyShuffle();
+      p.handleShuffle();
     }
   }
 
@@ -154,28 +176,38 @@ public class Game
     return cards.get(drawIndex++);
   }
 
-  private void servePlayer(Player p)
+  private boolean servePlayer(Player p)
   {
+    boolean canSurrender = true;
     while (true) {
-      Move m = p.play();
-      switch (m) {
+      switch (p.play()) {
         case STAND:
-          return;
+          return false;
 
         case HIT:
           playerDraws(p);
           if (Cards.countMin(openCards.get(p)) > BLACKJACK) {
-            return;
+            p.handleResult(BUST, 0);
+            return true;
           }
           break;
 
+        case SURRENDER:
+          if (!canSurrender) throw new IllegalMoveException("player can only surrender on first move");
+          p.handleResult(SURRENDER, bets.get(p) * 0.5);
+          return true;
+
+        case SPLIT:
+          throw new UnsupportedOperationException("move not implemented");
+
         default:
-          throw new IllegalMoveException("unsupported move");
+          throw new RuntimeException("wtf");
       }
+      canSurrender = false;
     }
   }
 
-  private int serveDealer()
+  private void serveDealer()
   {
     while (true) {
       dealerDraws();
@@ -183,13 +215,13 @@ public class Game
 
       int countIdeal = Cards.countIdeal(dealersCards);
       if (countIdeal > BLACKJACK) {
-        return countIdeal;
+        return;
       }
       if (!config.getDealerStandsOnSoftThreshold() && Cards.isSoft(dealersCards) && countIdeal == GameConfig.DEALER_THRESHOLD) {
         continue;
       }
       if (countIdeal >= GameConfig.DEALER_THRESHOLD) {
-        return countIdeal;
+        return;
       }
     }
   }
@@ -198,7 +230,7 @@ public class Game
   {
     Card c = draw();
     openCards.get(p).add(c);
-    p.receiveCard(c, p);
+    p.handleCard(c, p);
     return c;
   }
 
@@ -207,7 +239,7 @@ public class Game
     Card c = draw();
     openCards.get(null).add(c);
     for (Player p : players) {
-      p.receiveCard(c, null);
+      p.handleCard(c, null);
     }
     return c;
   }

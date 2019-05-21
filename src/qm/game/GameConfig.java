@@ -14,11 +14,14 @@ public class GameConfig
   public static final int DEALER_THRESHOLD = 17;
 
   private int maxPlayers = 6;
-  private int betLimit = 400;
+  private int betLimitMin = 5;
+  private int betLimitMax = 400;
 
   private int decks = 6;
   private List<Card> deck;
   private boolean dealerStandsOnSoftThreshold = true;
+
+  private double blackjackBonus = 1.5;
 
   {
     List<Card> l = new ArrayList<>(Suit.values().length * Rank.values().length);
@@ -40,8 +43,10 @@ public class GameConfig
     setMaxPlayers(config.maxPlayers);
     setDecks(config.decks);
     setDeck(config.deck);
-    setBetLimit(config.betLimit);
+    setBetLimitMin(config.betLimitMin);
+    setBetLimitMax(config.betLimitMax);
     setDealerStandsOnSoftThreshold(config.dealerStandsOnSoftThreshold);
+    setBlackjackBonus(config.blackjackBonus);
   }
 
   public int getMaxPlayers()
@@ -74,14 +79,24 @@ public class GameConfig
     this.deck = List.copyOf(deck);
   }
 
-  public int getBetLimit()
+  public int getBetLimitMin()
   {
-    return betLimit;
+    return betLimitMin;
   }
 
-  public void setBetLimit(int betLimit)
+  public void setBetLimitMin(int betLimitMin)
   {
-    this.betLimit = betLimit;
+    this.betLimitMin = betLimitMin;
+  }
+
+  public int getBetLimitMax()
+  {
+    return betLimitMax;
+  }
+
+  public void setBetLimitMax(int betLimitMax)
+  {
+    this.betLimitMax = betLimitMax;
   }
 
   public boolean getDealerStandsOnSoftThreshold()
@@ -92,5 +107,15 @@ public class GameConfig
   public void setDealerStandsOnSoftThreshold(boolean dealerStandsOnSoftThreshold)
   {
     this.dealerStandsOnSoftThreshold = dealerStandsOnSoftThreshold;
+  }
+
+  public double getBlackjackBonus()
+  {
+    return blackjackBonus;
+  }
+
+  public void setBlackjackBonus(double blackjackBonus)
+  {
+    this.blackjackBonus = blackjackBonus;
   }
 }
