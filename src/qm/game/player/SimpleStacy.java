@@ -1,8 +1,12 @@
 package qm.game.player;
 
 import qm.game.Game;
+import qm.game.card.Card;
 import qm.game.card.Cards;
 import qm.game.card.Rank;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static qm.game.player.Move.*;
 
@@ -25,17 +29,28 @@ public class SimpleStacy
       case DOUBLE:
         balance -= lastBet;
         break;
+
       case SPLIT:
         balance -= lastBet;
-        // todo
+        List<Card> currentCards = cards.get(split);
+        cards.set(split, new ArrayList<>(List.of(currentCards.get(0))));
+        cards.set(++split, new ArrayList<>(List.of(currentCards.get(1))));
         break;
+
+      case SURRENDER:
+        if(!firstMove) {
+          m = HIT;
+        }
     }
+
+    firstMove = false;
     return m;
   }
 
   private Move playImpl()
   {
     int dealersCount = getDealersCard().rank.value;
+    List<Card> cards = this.cards.get(split);
     int count = Cards.countIdeal(cards);
 
     if (cards.get(0).equals(cards.get(1))) {

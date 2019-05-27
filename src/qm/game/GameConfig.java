@@ -14,11 +14,12 @@ public class GameConfig
   public static final int DEALER_THRESHOLD = 17;
 
   private int maxPlayers = 6;
-  private int betLimitMin = 5;
-  private int betLimitMax = 400;
+  private int betLimitMin = 1;
+  private int betLimitMax = 80;
 
   private int decks = 6;
   private List<Card> deck;
+  private double shuffleThreshold = 0.2;
   private boolean dealerStandsOnSoftThreshold = true;
 
   private double blackjackBonus = 1.5;
@@ -43,6 +44,7 @@ public class GameConfig
     setMaxPlayers(config.maxPlayers);
     setDecks(config.decks);
     setDeck(config.deck);
+    setShuffleThreshold(config.shuffleThreshold);
     setBetLimitMin(config.betLimitMin);
     setBetLimitMax(config.betLimitMax);
     setDealerStandsOnSoftThreshold(config.dealerStandsOnSoftThreshold);
@@ -77,6 +79,16 @@ public class GameConfig
   public void setDeck(List<Card> deck)
   {
     this.deck = List.copyOf(deck);
+  }
+
+  public double getShuffleThreshold()
+  {
+    return shuffleThreshold;
+  }
+
+  public void setShuffleThreshold(double shuffleThreshold)
+  {
+    this.shuffleThreshold = shuffleThreshold;
   }
 
   public int getBetLimitMin()

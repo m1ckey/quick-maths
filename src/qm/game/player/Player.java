@@ -14,10 +14,13 @@ public abstract class Player
   public final Game game;
   protected final GameConfig config;
   private final int serial = SEQUENCE.getAndIncrement();
-  protected List<Card> cards = new ArrayList<>();
+  protected List<List<Card>> cards = new ArrayList<>();
   protected List<Card> dealersCards = new ArrayList<>();
 
   protected double balance = 0;
+
+  protected boolean firstMove = true;
+  protected int split = 0;
 
   public Player(Game game)
   {
@@ -30,19 +33,21 @@ public abstract class Player
                            double payout)
   {
     balance += payout;
-    reset();
   }
 
-  protected void reset()
+  public void handleNewRound()
   {
+    firstMove = true;
     cards.clear();
+    cards.add(new ArrayList<>());
+    split = 0;
     dealersCards.clear();
   }
 
   protected Card getDealersCard()
   {
     if (dealersCards.size() != 1) {
-      throw new RuntimeException("dealer should only have one card");
+      throw new RuntimeException("dealer should have one card");
     }
     return dealersCards.get(0);
   }
@@ -51,20 +56,26 @@ public abstract class Player
   {
   }
 
-  public void handleCard(Card c,
+  public void handleDraw(Card c,
                          Player p)
   {
-    if (p == null) {
-      dealersCards.add(c);
-    }
     if (p == this) {
-      cards.add(c);
+      cards.get(split).add(c);
     }
+  }
+
+  public void handleDealerDraw(Card c) {
+    dealersCards.add(c);
   }
 
   public abstract Move play();
 
   public abstract int placeBet();
+
+  public double getBalance()
+  {
+    return balance;
+  }
 
   @Override
   public String toString()

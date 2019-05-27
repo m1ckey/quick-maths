@@ -16,26 +16,20 @@ public class Game
     implements Runnable
 {
   private final GameConfig config;
-  private final Player[] players;
-  private long round;
-  private List<Card> cards;
-  private int drawIndex = 0;
-  private int revenue = 0;
+  private final Set<Player> players = new HashSet<>();
+  private int round;
+  private final List<Card> cards;
+  private int drawIndex;
+  private double balance;
 
   public Game()
   {
     this(new GameConfig());
   }
 
-  private Map<Player, Integer> bets = new HashMap<>();
-
-  private Map<Player, List<Card>> openCards = new HashMap<>();
-
   public Game(GameConfig config)
   {
     this.config = new GameConfig(config);
-
-    players = new Player[config.getMaxPlayers()];
 
     cards = new ArrayList<>(config.getDecks() * config.getDeck().size());
     for (int i = 0; i < config.getDecks(); i++) {
@@ -50,116 +44,110 @@ public class Game
     return new GameConfig(config);
   }
 
-  public synchronized int join(Player player)
+  public synchronized void join(Player player)
   {
-    for (int i = 0; i < players.length; i++) {
-      if (players[i] == null) {
-        join(player, i);
-        return i;
-      }
-    }
-
-    throw new RuntimeException("max Players exceeded");
+    if (player == null) throw new IllegalArgumentException("player cannot be null");
+    if (player.game != this) throw new IllegalArgumentException("player was not configured for this game");
+    if (players.size() >= config.getMaxPlayers()) throw new RuntimeException("max Players exceeded");
+    players.add(player);
   }
 
   public synchronized void leave(Player player)
   {
-    for (int i = 0; i < players.length; i++) {
-      if (players[i] == player) {
-        players[i] = null;
-      }
-    }
-  }
-
-  public synchronized void join(Player player,
-                                int position)
-  {
-    if (player == null) throw new IllegalArgumentException("player cannot be null");
-    if (player.game != this) throw new IllegalArgumentException("player was not constructed for this game");
-
-    for (Player p : players) {
-      if (p == player) {
-        throw new IllegalArgumentException("player already joined");
-      }
-    }
-
-    if (players[position] != null) {
-      throw new IllegalArgumentException("position already taken");
-    }
-    players[position] = player;
+    players.remove(player);
   }
 
   @Override
   public synchronized void run()
   {
-    List<Player> players = new ArrayList<>(Arrays.asList(this.players));
+    while (!Thread.interrupted()) {
+      playRound();
+    }
+  }
 
-    // init openCards
+  public synchronized void run(int rounds)
+  {
+    int goal = round + rounds;
+
+    while (round < goal) {
+      playRound();
+    }
+  }
+
+  private void playRound()
+  {
+    final Hand dealersHand;
+    final Map<Player, List<Hand>> playerHands = new HashMap<>();
+    final Map<Hand, Double> bets = new HashMap<>();
+    final List<Hand> showdownHands = new ArrayList<>();
+
+    // init
     {
-      openCards.clear();
-      openCards.put(null, new ArrayList<>());
+      players.forEach(Player::handleNewRound);
+      dealersHand = new Hand(null);
       for (Player p : players) {
-        openCards.put(p, new ArrayList<>());
+        playerHands.put(p, new ArrayList<>(List.of(new Hand(p))));
       }
     }
 
     // get bets
     {
-      bets.clear();
-      for (Player p : players) {
-        int bet = p.placeBet();
+      for (List<Hand> hands : playerHands.values()) {
+        Hand h = hands.get(0);
+        double bet = h.player.placeBet();
         if (bet < config.getBetLimitMin()) throw new IllegalBetException("bet limit undershot");
         if (bet > config.getBetLimitMax()) throw new IllegalBetException("bet limit exceeded");
-        bets.put(p, bet);
+        bets.put(h, logRevenue(bet));
       }
     }
 
     // deal cards
     {
-      for (Player p : players) {
-        playerDraws(p);
+      for (List<Hand> hands : playerHands.values()) {
+        playerDraws(hands.get(0));
       }
-      dealerDraws();
-      for (Player p : players) {
-        playerDraws(p);
+      dealerDraws(dealersHand);
+      for (List<Hand> hands : playerHands.values()) {
+        playerDraws(hands.get(0));
       }
     }
 
     // play
     {
-      List<Player> disqualifiedPlayers = new ArrayList<>();
       for (Player p : players) {
-        boolean disqualified = servePlayer(p);
-        if (disqualified) {
-          disqualifiedPlayers.add(p);
-        }
+        showdownHands.addAll(servePlayer(p, playerHands, bets));
       }
-      players.removeAll(disqualifiedPlayers);
-      serveDealer();
+      serveDealer(dealersHand);
     }
 
     // showdown
     {
-      List<Card> dealersCards = openCards.get(null);
+      List<Card> dealersCards = dealersHand.getCards();
       int dealerCountIdeal = Cards.countIdeal(dealersCards);
 
-      for (Player p : players) {
-        List<Card> playersCards = openCards.get(p);
+      for (Hand hand : showdownHands) {
+        List<Card> playersCards = hand.getCards();
         int playerCountIdeal = Cards.countIdeal(playersCards);
 
         if (Cards.isBlackjack(playersCards) && !Cards.isBlackjack(dealersCards)) {
-          p.handleResult(Result.BLACKJACK, bets.get(p) * (1 + config.getBlackjackBonus()));
+          hand.player.handleResult(Result.BLACKJACK, logPayout(bets.get(hand) * (1 + config.getBlackjackBonus())));
         } else if (dealerCountIdeal > BLACKJACK) {
-          p.handleResult(VICTORY, bets.get(p) * 2);
+          hand.player.handleResult(VICTORY, logPayout(bets.get(hand) * 2));
         } else if (playerCountIdeal == dealerCountIdeal) {
-          p.handleResult(TIE, bets.get(p));
+          hand.player.handleResult(TIE, logPayout(bets.get(hand)));
         } else if (playerCountIdeal < dealerCountIdeal) {
-          p.handleResult(DEFEAT, 0);
+          hand.player.handleResult(DEFEAT, logPayout(0));
         } else {
-          p.handleResult(VICTORY, bets.get(p) * 2);
+          hand.player.handleResult(VICTORY, logPayout(bets.get(hand) * 2));
         }
       }
     }
+
+    if ((double) drawIndex / cards.size() >= config.getShuffleThreshold()) {
+      shuffleCards();
+    }
+
+    round++;
   }
 
   private void shuffleCards()
@@ -176,42 +164,79 @@ public class Game
     return cards.get(drawIndex++);
   }
 
-  private boolean servePlayer(Player p)
+  private List<Hand> servePlayer(Player player, Map<Player, List<Hand>> playersHand, Map<Hand, Double> bets)
   {
-    boolean canSurrender = true;
+    List<Hand> hands = playersHand.get(player);
+    List<Hand> showdownHands = new ArrayList<>();
+    boolean isSplit = false;
+
+    for (int i = 0; i < hands.size(); i++) {
+      Hand hand = hands.get(i);
+
+      Boolean disqualified = servePlayerHand(hand, hands, bets, isSplit);
+
+      if(disqualified == null) {
+        isSplit = true;
+        i--;
+      } else if(!disqualified) {
+        showdownHands.add(hand);
+      }
+    }
+
+    return showdownHands;
+  }
+
+  private Boolean servePlayerHand(Hand hand, List<Hand> hands, Map<Hand, Double> bets, boolean isSplit) {
+    Player p = hand.player;
+    boolean firstMove = true;
     while (true) {
       switch (p.play()) {
         case STAND:
           return false;
 
+        case SURRENDER:
+          if (!firstMove) throw new IllegalMoveException("player can only surrender on first move");
+          if(isSplit) throw new IllegalMoveException("player cannot surrender in split");
+          p.handleResult(SURRENDER, logPayout(bets.get(hand) * 0.5));
+          return true;
+
+        case SPLIT:
+          if (!firstMove) throw new IllegalMoveException("player can only split on first move");
+          Hand splitHand = hand.split();
+          hands.add(splitHand);
+          bets.put(splitHand, bets.get(hand));
+          return null;
+
+        case DOUBLE:
+          if (!firstMove) throw new IllegalMoveException("player can only double on first move");
+          bets.put(hand, bets.get(hand) * 2);
+          playerDraws(hand);
+          if (Cards.isBusted(hand.getCards())) {
+            p.handleResult(BUST, logPayout(0));
+            return true;
+          }
+          return false;
+
         case HIT:
-          playerDraws(p);
-          if (Cards.countMin(openCards.get(p)) > BLACKJACK) {
-            p.handleResult(BUST, 0);
+          playerDraws(hand);
+          if (Cards.isBusted(hand.getCards())) {
+            p.handleResult(BUST, logPayout(0));
             return true;
           }
           break;
 
-        case SURRENDER:
-          if (!canSurrender) throw new IllegalMoveException("player can only surrender on first move");
-          p.handleResult(SURRENDER, bets.get(p) * 0.5);
-          return true;
-
-        case SPLIT:
-          throw new UnsupportedOperationException("move not implemented");
-
         default:
           throw new RuntimeException("wtf");
       }
-      canSurrender = false;
+      firstMove = false;
     }
   }
 
-  private void serveDealer()
+  private void serveDealer(Hand dealersHand)
   {
     while (true) {
-      dealerDraws();
-      List<Card> dealersCards = openCards.get(null);
+      dealerDraws(dealersHand);
+      List<Card> dealersCards = dealersHand.getCards();
 
       int countIdeal = Cards.countIdeal(dealersCards);
       if (countIdeal > BLACKJACK) {
@@ -226,21 +251,41 @@ public class Game
     }
   }
 
-  private Card playerDraws(Player p)
+  private Card playerDraws(Hand hand)
   {
     Card c = draw();
-    openCards.get(p).add(c);
-    p.handleCard(c, p);
+    hand.add(c);
+    hand.player.handleDraw(c, hand.player);
     return c;
   }
 
-  private Card dealerDraws()
+  private Card dealerDraws(Hand hand)
   {
     Card c = draw();
-    openCards.get(null).add(c);
+    hand.add(c);
     for (Player p : players) {
-      p.handleCard(c, null);
+      p.handleDealerDraw(c);
     }
     return c;
+  }
+
+  private double logRevenue(double revenue) {
+    balance += revenue;
+    return revenue;
+  }
+
+  private double logPayout(double payout) {
+    balance -= payout;
+    return payout;
+  }
+
+  public Set<Player> getPlayers()
+  {
+    return Collections.unmodifiableSet(players);
+  }
+
+  public int getRound()
+  {
+    return round;
   }
 }
